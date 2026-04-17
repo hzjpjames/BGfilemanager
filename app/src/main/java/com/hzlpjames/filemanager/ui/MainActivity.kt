@@ -12,7 +12,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import com.hzlpjames.filemanager.data.repository.LocalFileRepository
 import com.hzlpjames.filemanager.ui.screens.FileBrowserScreen
-import com.hzlpjames.filemanager.ui.theme.BGFileManagerTheme
+import com.hzlpjames.filemanager.ui.theme.BGfilemanagerTheme
 import com.hzlpjames.filemanager.ui.viewmodel.FileBrowserViewModel
 
 val LocalFileRepository = staticCompositionLocalOf<LocalFileRepository> {
@@ -35,7 +35,7 @@ class MainActivity : ComponentActivity() {
         viewModel.loadRoots()
         
         setContent {
-            BGFileManagerTheme {
+            BGfilemanagerTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
