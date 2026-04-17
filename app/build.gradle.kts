@@ -74,7 +74,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
     // SMB Client for LAN sharing
-    implementation("com.hierynomus:smbj:0.11.6")
+    implementation("com.hierynomus:smbj:0.11.5")
 
     // DataStore for preferences
     implementation("androidx.datastore:datastore-preferences:1.0.0")
