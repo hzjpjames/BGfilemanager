@@ -2,12 +2,19 @@ package com.hzlpjames.filemanager.data.repository
 
 import android.util.Log
 import com.hierynomus.msdtyp.AccessMask
+import com.hierynomus.msdtyp.FileTime
+import com.hierynomus.msfscc.FileAttributes
+import com.hierynomus.msfscc.fileinformation.FileAllInformation
+import com.hierynomus.msfscc.fileinformation.FileIdBothDirectoryInformation
+import com.hierynomus.msfscc.fileinformation.FileRenameInformation
 import com.hierynomus.mssmb2.SMB2CreateDisposition
 import com.hierynomus.mssmb2.SMB2ShareAccess
+import com.hierynomus.protocol.commons.EnumWithValue
 import com.hierynomus.smbj.SMBClient
 import com.hierynomus.smbj.auth.AuthenticationContext
 import com.hierynomus.smbj.connection.Connection
 import com.hierynomus.smbj.session.Session
+import com.hierynomus.smbj.share.DiskEntry
 import com.hierynomus.smbj.share.DiskShare
 import com.hierynomus.smbj.share.File
 import com.hzlpjames.filemanager.domain.model.FileItem
@@ -71,46 +78,31 @@ class SmbFileRepository : FileRepository {
         }
     }
 
-    suspend fun listShares(host: String): Result<List<String>> = withContext(Dispatchers.IO) {
-        try {
-            val tempClient = SMBClient()
-            val tempConnection = tempClient.connect(host)
-            val tempSession = tempConnection.authenticate(AuthenticationContext.anonymous())
-            val shares = tempSession.listShares().map { it.name }
-            tempSession.close()
-            tempConnection.close()
-            tempClient.close()
-            Result.success(shares)
-        } catch (e: Exception) {
-            Log.e(TAG, "列出共享失败", e)
-            Result.failure(e)
-        }
-    }
-
     override suspend fun listFiles(path: String): Result<List<FileItem>> = withContext(Dispatchers.IO) {
         try {
             val smbShare = share ?: return@withContext Result.failure(Exception("未连接"))
             val smbPath = path.trimStart('/')
-            val files = smbShare.list(smbPath).map { smbFile ->
-                val isDir = smbFile.fileInformation.isDirectory
-                val fileSize = if (isDir) 0L else {
-                    try { smbFile.fileInformation.size } catch (e: Exception) { 0L }
-                }
-                val lastMod = try {
-                    smbFile.lastWriteTime?.time
-                } catch (e: Exception) { 0L }
-                val isHidden = try {
-                    smbFile.isHidden
-                } catch (e: Exception) { false }
+            val files = smbShare.list(smbPath).map { info ->
+                val isDir = EnumWithValue.EnumUtils.isSet(
+                    info.fileAttributes,
+                    FileAttributes.FILE_ATTRIBUTE_DIRECTORY
+                )
+                val fileSize = if (isDir) 0L else info.endOfFile
+                val lastMod = info.lastWriteTime?.toEpochMillis() ?: 0L
+                val isHidden = EnumWithValue.EnumUtils.isSet(
+                    info.fileAttributes,
+                    FileAttributes.FILE_ATTRIBUTE_HIDDEN
+                )
                 FileItem(
-                    name = smbFile.fileName,
-                    path = "$path/${smbFile.fileName}",
+                    name = info.fileName,
+                    path = "$path/${info.fileName}",
                     isDirectory = isDir,
                     size = fileSize,
                     lastModified = lastMod,
                     isHidden = isHidden
                 )
-            }.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
+            }.filter { it.name != "." && it.name != ".." }
+                .sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
             Result.success(files)
         } catch (e: java.io.FileNotFoundException) {
             Result.success(emptyList())
@@ -136,7 +128,13 @@ class SmbFileRepository : FileRepository {
         try {
             val smbShare = share ?: return@withContext Result.failure(Exception("未连接"))
             val smbPath = path.trimStart('/')
-            val isDir = try { smbShare.getFileInformation(smbPath).isDirectory } catch (e: Exception) { false }
+            val isDir = try {
+                val info = smbShare.getFileInformation(smbPath)
+                EnumWithValue.EnumUtils.isSet(
+                    info.basicInformation.fileAttributes,
+                    FileAttributes.FILE_ATTRIBUTE_DIRECTORY
+                )
+            } catch (e: Exception) { false }
             if (isDir) {
                 smbShare.rmdir(smbPath, true)
             } else {
@@ -158,7 +156,20 @@ class SmbFileRepository : FileRepository {
             val smbShare = share ?: return@withContext Result.failure(Exception("未连接"))
             val srcPath = source.trimStart('/')
             val destPath = destination.trimStart('/')
-            smbShare.rename(srcPath, destPath)
+            val destName = destPath.substringAfterLast('/')
+            val destDir = destPath.substringBeforeLast('/', "")
+            
+            // Open source file and rename it
+            val entry = smbShare.open(
+                srcPath,
+                setOf(AccessMask.DELETE, AccessMask.GENERIC_WRITE),
+                null,
+                setOf(SMB2ShareAccess.FILE_SHARE_DELETE, SMB2ShareAccess.FILE_SHARE_WRITE, SMB2ShareAccess.FILE_SHARE_READ),
+                SMB2CreateDisposition.FILE_OPEN,
+                null
+            )
+            entry.rename(destName)
+            entry.close()
             Result.success(true)
         } catch (e: Exception) {
             Log.e(TAG, "移动失败", e)
@@ -176,7 +187,7 @@ class SmbFileRepository : FileRepository {
         try {
             val smbShare = share ?: return@withContext false
             val smbPath = path.trimStart('/')
-            smbShare.fileExists(smbPath)
+            smbShare.fileExists(smbPath) || smbShare.folderExists(smbPath)
         } catch (e: Exception) { false }
     }
 
@@ -184,22 +195,22 @@ class SmbFileRepository : FileRepository {
         try {
             val smbShare = share ?: return@withContext Result.failure(Exception("未连接"))
             val smbPath = path.trimStart('/')
-            val smbFile = smbShare.openFile(
-                smbPath, setOf(AccessMask.GENERIC_READ), null,
-                setOf(SMB2ShareAccess.FILE_SHARE_READ), SMB2CreateDisposition.FILE_OPEN, null
+            val info = smbShare.getFileInformation(smbPath)
+            val isDir = EnumWithValue.EnumUtils.isSet(
+                info.basicInformation.fileAttributes,
+                FileAttributes.FILE_ATTRIBUTE_DIRECTORY
             )
-            val isDir = try { smbFile.fileInformation.isDirectory } catch (e: Exception) { false }
-            val fileSize = if (isDir) 0L else {
-                try { smbFile.fileInformation.size } catch (e: Exception) { 0L }
-            }
-            smbFile.close()
+            val fileSize = if (isDir) 0L else info.standardInformation.endOfFile
             Result.success(FileItem(
                 name = path.substringAfterLast('/'),
                 path = path,
                 isDirectory = isDir,
                 size = fileSize,
-                lastModified = 0,
-                isHidden = false
+                lastModified = info.basicInformation.lastWriteTime?.toEpochMillis() ?: 0L,
+                isHidden = EnumWithValue.EnumUtils.isSet(
+                    info.basicInformation.fileAttributes,
+                    FileAttributes.FILE_ATTRIBUTE_HIDDEN
+                )
             ))
         } catch (e: Exception) {
             Result.failure(e)
