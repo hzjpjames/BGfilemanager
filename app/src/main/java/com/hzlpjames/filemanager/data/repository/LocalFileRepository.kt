@@ -141,25 +141,41 @@ class LocalFileRepository(
      */
     fun getStorageRoots(): List<FileItem> {
         val roots = mutableListOf<FileItem>()
-        
-        // 内部存储
-        val internalStorage = File("/storage/emulated/0")
-        if (internalStorage.exists()) {
+
+        // 内部存储 - 使用 context.filesDir 向上追溯
+        val internalDir = context.filesDir
+        var storagePath = internalDir.absolutePath
+        if (storagePath.contains("/Android/data/")) {
+            storagePath = storagePath.substringBefore("/Android/data/")
+        } else if (storagePath.contains("/Android")) {
+            storagePath = storagePath.substringBefore("/Android")
+        }
+        val internalStorage = File(storagePath)
+        if (internalStorage.exists() && internalStorage.canRead()) {
             roots.add(FileItem(
                 name = "内部存储",
                 path = internalStorage.absolutePath,
                 isDirectory = true
             ))
         }
-        
+
+        // 备选: /storage/emulated/0 (需要权限)
+        val altPath = File("/storage/emulated/0")
+        if (altPath.exists() && altPath.canRead() && roots.isEmpty()) {
+            roots.add(FileItem(
+                name = "内部存储",
+                path = altPath.absolutePath,
+                isDirectory = true
+            ))
+        }
+
         // 外部SD卡
         val externalDirs = context.getExternalFilesDirs(null)
         externalDirs.filterNotNull().forEach { dir ->
-            // 跳过主存储
             if (!dir.absolutePath.contains("emulated")) {
-                val storagePath = dir.absolutePath.substringBefore("Android")
-                val sdCard = File(storagePath)
-                if (sdCard.exists()) {
+                val sdPath = dir.absolutePath.substringBefore("Android")
+                val sdCard = File(sdPath)
+                if (sdCard.exists() && sdCard.canRead()) {
                     roots.add(FileItem(
                         name = "SD卡",
                         path = sdCard.absolutePath,
@@ -168,7 +184,7 @@ class LocalFileRepository(
                 }
             }
         }
-        
+
         return roots
     }
 }
