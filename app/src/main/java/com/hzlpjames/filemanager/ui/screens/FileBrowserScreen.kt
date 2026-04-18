@@ -344,7 +344,7 @@ fun SortDialog(
         title = { Text("排序方式") },
         text = {
             Column {
-                SortMode.values().forEach { mode ->
+                SortMode.entries.forEach { mode ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
